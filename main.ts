@@ -3,12 +3,14 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
-	mySetting: string;
+	apiKey: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+	apiKey: ''
 }
+
+const apiUrl = 'https://api.openai.com/v1/completions';
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
@@ -17,32 +19,72 @@ export default class MyPlugin extends Plugin {
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
+		const ribbonIconEl = this.addRibbonIcon('dice', 'Lexidian', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
 			new Notice('This is a notice!');
 		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
+		// TODO: use it later to show the loading status
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		statusBarItemEl.setText('Loading | Not loading');
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
+			id: 'lexidian-autocomplete-text',
+			name: 'Autocomplete text',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				// get the text from the editor right before the cursor
+				const text = editor.getValue();
+
+				const fetchOptions = {
+					method: 'POST',
+					headers: {
+						Accept: 'application/json',
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${this.settings.apiKey}`,
+					},
+					body: JSON.stringify({
+						model: 'text-davinci-003',
+						//queues the model to return a summary, works fine.
+						prompt: text,
+						temperature: 0.7,
+						max_tokens: 1000,
+						presence_penalty: 0.0,
+						stream: true,
+						// stop: ['\n'],
+					}),
+				};
+				fetch(apiUrl, fetchOptions).then(async (response) => {
+					const r = response.body;
+					if (!r) throw new Error('No response body');
+
+					const d = new TextDecoder('utf8');
+					const reader = await r.getReader();
+					// TODO: try different ways to get the text from the stream like sse.js
+					while (true) {
+						const { value, done } = await reader.read();
+						if (done) {
+							console.log('done');
+							break;
+						} else {
+							const decodedString = d.decode(value);
+							console.log(decodedString);
+							const lines = decodedString.split('\n').filter(line => line.trim() !== '');
+							for (const line of lines) {
+									const message = line.replace(/^data: /, '');
+									if (message === '[DONE]') {
+											return; // Stream finished
+									}
+									try {
+											const parsed = JSON.parse(message);
+											editor.replaceSelection(parsed.choices[0].text);
+									} catch(error) {
+											console.error('Could not JSON parse stream message', message, error);
+									}
+							}
+						}
+					}
+				});
 			}
 		});
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
@@ -123,14 +165,14 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('Your OpenAI API Key')
+			.setDesc('You can get it from your OpenAI dashboard.')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('Enter your API key')
+				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
-					console.log('Secret: ' + value);
-					this.plugin.settings.mySetting = value;
+					console.log('API key: ' + value);
+					this.plugin.settings.apiKey = value;
 					await this.plugin.saveSettings();
 				}));
 	}
