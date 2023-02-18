@@ -25,7 +25,6 @@ export default class MyPlugin extends Plugin {
       },
       body: JSON.stringify({
         model: 'text-davinci-003',
-        //queues the model to return a summary, works fine.
         prompt: text,
         temperature: 0.7,
         max_tokens: 1000,
@@ -77,7 +76,7 @@ export default class MyPlugin extends Plugin {
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Lexidian', (evt: MouseEvent) => {
+		const ribbonIconEl = this.addRibbonIcon('users', 'Devam', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
 			new Notice('This is a notice!');
 		});
@@ -104,7 +103,7 @@ export default class MyPlugin extends Plugin {
     }));
 
 		this.addCommand({
-			id: 'lexidian-autocomplete-text',
+			id: 'devam-autocomplete-text',
 			name: 'Autocomplete text',
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				// get the text from the editor right before the cursor
