@@ -15,6 +15,64 @@ const apiUrl = 'https://api.openai.com/v1/completions';
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
+  autocomplete (text: string, editor: Editor, replaceToken: boolean = false) {
+    const fetchOptions = {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.settings.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'text-davinci-003',
+        //queues the model to return a summary, works fine.
+        prompt: text,
+        temperature: 0.7,
+        max_tokens: 1000,
+        presence_penalty: 0.0,
+        stream: true,
+        // stop: ['\n'],
+      }),
+    };
+    fetch(apiUrl, fetchOptions).then(async (response) => {
+      const r = response.body;
+      if (!r) throw new Error('No response body');
+
+      const d = new TextDecoder('utf8');
+      const reader = await r.getReader();
+      // TODO: try different ways to get the text from the stream like sse.js
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          console.log('done');
+          break;
+        } else {
+          const decodedString = d.decode(value);
+          console.log(decodedString);
+          const lines = decodedString.split('\n').filter(line => line.trim() !== '');
+          for (const line of lines) {
+              const message = line.replace(/^data: /, '');
+              if (message === '[DONE]') {
+                  return; // Stream finished
+              }
+              try {
+                  const parsed = JSON.parse(message);
+                  const cursor = editor.getCursor();
+                  const startPos = {line: cursor.line, ch: cursor.ch - 3}
+                  if (replaceToken && editor.getRange(startPos, cursor).endsWith('+++')) {
+                    editor.replaceRange(parsed.choices[0].text, {line: cursor.line, ch: cursor.ch - 3}, cursor);
+                  } else {
+                    editor.replaceSelection(parsed.choices[0].text);
+                  }
+              } catch(error) {
+                  console.error('Could not JSON parse stream message', message, error);
+              }
+          }
+        }
+      }
+    });
+  }
+
 	async onload() {
 		await this.loadSettings();
 
@@ -29,62 +87,29 @@ export default class MyPlugin extends Plugin {
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText('Loading | Not loading');
 
+    // subscribe to the editor change event
+    this.registerEvent(this.app.workspace.on('editor-change', (editor: Editor, view: MarkdownView) => {
+      console.log('editor-change', editor, view);
+      // the cursor position
+      const cursor = editor.getCursor();
+      const startPos = {
+        line: cursor.line,
+        ch: cursor.ch - 3, // length of '+++'
+      };
+      // get get the text from the editor right before the cursor
+      if (editor.getRange(startPos, cursor).endsWith('+++')) {
+        const text = editor.getRange({line: 0, ch: 0}, startPos);
+        this.autocomplete(text, editor, true);
+      }
+    }));
+
 		this.addCommand({
 			id: 'lexidian-autocomplete-text',
 			name: 'Autocomplete text',
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				// get the text from the editor right before the cursor
 				const text = editor.getValue();
-
-				const fetchOptions = {
-					method: 'POST',
-					headers: {
-						Accept: 'application/json',
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${this.settings.apiKey}`,
-					},
-					body: JSON.stringify({
-						model: 'text-davinci-003',
-						//queues the model to return a summary, works fine.
-						prompt: text,
-						temperature: 0.7,
-						max_tokens: 1000,
-						presence_penalty: 0.0,
-						stream: true,
-						// stop: ['\n'],
-					}),
-				};
-				fetch(apiUrl, fetchOptions).then(async (response) => {
-					const r = response.body;
-					if (!r) throw new Error('No response body');
-
-					const d = new TextDecoder('utf8');
-					const reader = await r.getReader();
-					// TODO: try different ways to get the text from the stream like sse.js
-					while (true) {
-						const { value, done } = await reader.read();
-						if (done) {
-							console.log('done');
-							break;
-						} else {
-							const decodedString = d.decode(value);
-							console.log(decodedString);
-							const lines = decodedString.split('\n').filter(line => line.trim() !== '');
-							for (const line of lines) {
-									const message = line.replace(/^data: /, '');
-									if (message === '[DONE]') {
-											return; // Stream finished
-									}
-									try {
-											const parsed = JSON.parse(message);
-											editor.replaceSelection(parsed.choices[0].text);
-									} catch(error) {
-											console.error('Could not JSON parse stream message', message, error);
-									}
-							}
-						}
-					}
-				});
+        this.autocomplete(text, editor);
 			}
 		});
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
